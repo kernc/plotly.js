@@ -11,7 +11,6 @@
 
 var d3 = require('d3');
 
-var svgTextUtils = require('../lib/svg_text_utils');
 var Drawing = require('../components/drawing');
 var Color = require('../components/color');
 
@@ -20,6 +19,21 @@ var DOUBLEQUOTE_REGEX = /"/g;
 var DUMMY_SUB = 'TOBESTRIPPED';
 var DUMMY_REGEX = new RegExp('("' + DUMMY_SUB + ')|(' + DUMMY_SUB + '")', 'g');
 
+function htmlEntityDecode(s) {
+    var hiddenDiv = d3.select('body').append('div').style({display: 'none'}).html('');
+    var replaced = s.replace(/(&[^;]*;)/gi, function(d) {
+        if(d === '&lt;') { return '&#60;'; } // special handling for brackets
+        if(d === '&rt;') { return '&#62;'; }
+        if(d.indexOf('<') !== -1 || d.indexOf('>') !== -1) { return ''; }
+        return hiddenDiv.html(d).text(); // everything else, let the browser decode it to unicode
+    });
+    hiddenDiv.remove();
+    return replaced;
+}
+
+function xmlEntityEncode(str) {
+    return str.replace(/&(?!\w+;|\#[0-9]+;| \#x[0-9A-F]+;)/g, '&amp;');
+}
 
 module.exports = function toSVG(gd, format) {
     var fullLayout = gd._fullLayout,
@@ -72,20 +86,22 @@ module.exports = function toSVG(gd, format) {
     svg.node().style.background = '';
 
     svg.selectAll('text')
-        .attr('data-unformatted', null)
+        .attr({'data-unformatted': null, 'data-math': null})
         .each(function() {
             var txt = d3.select(this);
 
-            // hidden text is pre-formatting mathjax,
-            // the browser ignores it but it can still confuse batik
-            if(txt.style('visibility') === 'hidden') {
+            // hidden text is pre-formatting mathjax, the browser ignores it
+            // but in a static plot it's useless and it can confuse batik
+            // we've tried to standardize on display:none but make sure we still
+            // catch visibility:hidden if it ever arises
+            if(txt.style('visibility') === 'hidden' || txt.style('display') === 'none') {
                 txt.remove();
                 return;
             }
             else {
-                // force other visibility value to export as visible
+                // clear other visibility/display values to default
                 // to not potentially confuse non-browser SVG implementations
-                txt.style('visibility', 'visible');
+                txt.style({visibility: null, display: null});
             }
 
             // Font family styles break things because of quotation marks,
@@ -121,8 +137,8 @@ module.exports = function toSVG(gd, format) {
     svg.node().setAttributeNS(xmlnsNamespaces.xmlns, 'xmlns:xlink', xmlnsNamespaces.xlink);
 
     var s = new window.XMLSerializer().serializeToString(svg.node());
-    s = svgTextUtils.html_entity_decode(s);
-    s = svgTextUtils.xml_entity_encode(s);
+    s = htmlEntityDecode(s);
+    s = xmlEntityEncode(s);
 
     // Fix quotations around font strings and gradient URLs
     s = s.replace(DUMMY_REGEX, '\'');

@@ -14,6 +14,7 @@ var Drawing = require('../../components/drawing');
 var map1dArray = require('./map_1d_array');
 var makepath = require('./makepath');
 var orientText = require('./orient_text');
+var svgTextUtils = require('../../lib/svg_text_utils');
 
 module.exports = function plot(gd, plotinfo, cdcarpet) {
     for(var i = 0; i < cdcarpet.length; i++) {
@@ -35,8 +36,6 @@ function plotOne(gd, plotinfo, cd) {
         aax = trace.aaxis,
         bax = trace.baxis,
         fullLayout = gd._fullLayout;
-        // uid = trace.uid,
-        // id = 'carpet' + uid;
 
     var gridLayer = plotinfo.plot.selectAll('.carpetlayer');
     var clipLayer = makeg(fullLayout._defs, 'g', 'clips');
@@ -59,22 +58,18 @@ function plotOne(gd, plotinfo, cd) {
     drawGridLines(xa, ya, boundaryLayer, aax, 'a-boundary', aax._boundarylines);
     drawGridLines(xa, ya, boundaryLayer, bax, 'b-boundary', bax._boundarylines);
 
-    var maxAExtent = drawAxisLabels(Drawing.tester, xa, ya, trace, t, labelLayer, aax._labels, 'a-label');
-    var maxBExtent = drawAxisLabels(Drawing.tester, xa, ya, trace, t, labelLayer, bax._labels, 'b-label');
+    var maxAExtent = drawAxisLabels(gd, xa, ya, trace, t, labelLayer, aax._labels, 'a-label');
+    var maxBExtent = drawAxisLabels(gd, xa, ya, trace, t, labelLayer, bax._labels, 'b-label');
 
-    drawAxisTitles(labelLayer, trace, t, xa, ya, maxAExtent, maxBExtent);
+    drawAxisTitles(gd, labelLayer, trace, t, xa, ya, maxAExtent, maxBExtent);
 
-    // Swap for debugging in order to draw directly:
-    // drawClipPath(trace, axisLayer, xa, ya);
     drawClipPath(trace, t, clipLayer, xa, ya);
 }
 
 function drawClipPath(trace, t, layer, xaxis, yaxis) {
     var seg, xp, yp, i;
-    // var clip = makeg(layer, 'g', 'carpetclip');
-    trace.clipPathId = 'clip' + trace.uid + 'carpet';
 
-    var clip = layer.select('#' + trace.clipPathId);
+    var clip = layer.select('#' + trace._clipPathId);
 
     if(!clip.size()) {
         clip = layer.append('clipPath')
@@ -95,13 +90,9 @@ function drawClipPath(trace, t, layer, xaxis, yaxis) {
     // This could be optimized ever so slightly to avoid no-op L segments
     // at the corners, but it's so negligible that I don't think it's worth
     // the extra complexity
-    trace.clipPathData = 'M' + segs.join('L') + 'Z';
-    clip.attr('id', trace.clipPathId);
-    path.attr('d', trace.clipPathData);
-        // .style('stroke-width', 20)
-        // .style('vector-effect', 'non-scaling-stroke')
-        // .style('stroke', 'black')
-        // .style('fill', 'rgba(0, 0, 0, 0.1)');
+    var clipPathData = 'M' + segs.join('L') + 'Z';
+    clip.attr('id', trace._clipPathId);
+    path.attr('d', clipPathData);
 }
 
 function drawGridLines(xaxis, yaxis, layer, axis, axisLetter, gridlines) {
@@ -133,7 +124,7 @@ function drawGridLines(xaxis, yaxis, layer, axis, axisLetter, gridlines) {
     gridJoin.exit().remove();
 }
 
-function drawAxisLabels(tester, xaxis, yaxis, trace, t, layer, labels, labelClass) {
+function drawAxisLabels(gd, xaxis, yaxis, trace, t, layer, labels, labelClass) {
     var labelJoin = layer.selectAll('text.' + labelClass).data(labels);
 
     labelJoin.enter().append('text')
@@ -152,20 +143,26 @@ function drawAxisLabels(tester, xaxis, yaxis, trace, t, layer, labels, labelClas
             orientation = orientText(trace, xaxis, yaxis, label.xy, [Math.cos(angle), Math.sin(angle)]);
         }
         var direction = (label.endAnchor ? -1 : 1) * orientation.flip;
-        var bbox = Drawing.measureText(tester, label.text, label.font);
 
-        d3.select(this)
-            .attr('text-anchor', direction > 0 ? 'start' : 'end')
+        var labelEl = d3.select(this)
+            .attr({
+                'text-anchor': direction > 0 ? 'start' : 'end',
+                'data-notex': 1
+            })
+            .call(Drawing.font, label.font)
             .text(label.text)
-            .attr('transform',
+            .call(svgTextUtils.convertToTspans, gd);
+
+        var bbox = Drawing.bBox(this);
+
+        labelEl.attr('transform',
                 // Translate to the correct point:
                 'translate(' + orientation.p[0] + ',' + orientation.p[1] + ') ' +
                 // Rotate to line up with grid line tangent:
                 'rotate(' + orientation.angle + ')' +
                 // Adjust the baseline and indentation:
                 'translate(' + label.axis.labelpadding * direction + ',' + bbox.height * 0.3 + ')'
-            )
-            .call(Drawing.font, label.font.family, label.font.size, label.font.color);
+            );
 
         maxExtent = Math.max(maxExtent, bbox.width + label.axis.labelpadding);
     });
@@ -175,23 +172,23 @@ function drawAxisLabels(tester, xaxis, yaxis, trace, t, layer, labels, labelClas
     return maxExtent;
 }
 
-function drawAxisTitles(layer, trace, t, xa, ya, maxAExtent, maxBExtent) {
+function drawAxisTitles(gd, layer, trace, t, xa, ya, maxAExtent, maxBExtent) {
     var a, b, xy, dxy;
 
     a = 0.5 * (trace.a[0] + trace.a[trace.a.length - 1]);
     b = trace.b[0];
     xy = trace.ab2xy(a, b, true);
     dxy = trace.dxyda_rough(a, b);
-    drawAxisTitle(layer, trace, t, xy, dxy, trace.aaxis, xa, ya, maxAExtent, 'a-title');
+    drawAxisTitle(gd, layer, trace, t, xy, dxy, trace.aaxis, xa, ya, maxAExtent, 'a-title');
 
     a = trace.a[0];
     b = 0.5 * (trace.b[0] + trace.b[trace.b.length - 1]);
     xy = trace.ab2xy(a, b, true);
     dxy = trace.dxydb_rough(a, b);
-    drawAxisTitle(layer, trace, t, xy, dxy, trace.baxis, xa, ya, maxBExtent, 'b-title');
+    drawAxisTitle(gd, layer, trace, t, xy, dxy, trace.baxis, xa, ya, maxBExtent, 'b-title');
 }
 
-function drawAxisTitle(layer, trace, t, xy, dxy, axis, xa, ya, offset, labelClass) {
+function drawAxisTitle(gd, layer, trace, t, xy, dxy, axis, xa, ya, offset, labelClass) {
     var data = [];
     if(axis.title) data.push(axis.title);
     var titleJoin = layer.selectAll('text.' + labelClass).data(data);
@@ -214,6 +211,7 @@ function drawAxisTitle(layer, trace, t, xy, dxy, axis, xa, ya, offset, labelClas
         var el = d3.select(this);
 
         el.text(axis.title || '')
+            .call(svgTextUtils.convertToTspans, gd)
             .attr('transform',
                 'translate(' + orientation.p[0] + ',' + orientation.p[1] + ') ' +
                 'rotate(' + orientation.angle + ') ' +

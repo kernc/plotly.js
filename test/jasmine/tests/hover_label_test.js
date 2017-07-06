@@ -154,7 +154,7 @@ describe('hover info', function() {
             expect(d3.selectAll('g.axistext').size()).toEqual(1);
             expect(d3.selectAll('g.hovertext').size()).toEqual(1);
             expect(d3.selectAll('g.axistext').select('text').html()).toEqual('0.388');
-            expect(d3.selectAll('g.hovertext').select('text').selectAll('tspan').size()).toEqual(2);
+            expect(d3.selectAll('g.hovertext').select('text.nums').selectAll('tspan').size()).toEqual(2);
             expect(d3.selectAll('g.hovertext').selectAll('tspan')[0][0].innerHTML).toEqual('1');
             expect(d3.selectAll('g.hovertext').selectAll('tspan')[0][1].innerHTML).toEqual('hover text');
         });
@@ -587,6 +587,23 @@ describe('hover info', function() {
             Plotly.plot(gd, data, layout).then(done);
         });
 
+        it('should skip the hover event if explicitly instructed', function(done) {
+            var hoverHandler = jasmine.createSpy();
+            gd.on('plotly_hover', hoverHandler);
+
+            var gdBB = gd.getBoundingClientRect();
+            var event = {clientX: gdBB.left + 300, clientY: gdBB.top + 200};
+
+            Promise.resolve().then(function() {
+                Fx.hover(gd, event, 'xy', true);
+            })
+            .then(function() {
+                expect(hoverHandler).not.toHaveBeenCalled();
+            })
+            .catch(fail)
+            .then(done);
+        });
+
         it('should emit events only if the event looks user-driven', function(done) {
             var hoverHandler = jasmine.createSpy();
             gd.on('plotly_hover', hoverHandler);
@@ -754,6 +771,7 @@ describe('hover info on overlaid subplots', function() {
 describe('hover after resizing', function() {
     'use strict';
 
+    var gd;
     afterEach(destroyGraphDiv);
 
     function _click(pos) {
@@ -767,22 +785,17 @@ describe('hover after resizing', function() {
     }
 
     function assertLabelCount(pos, cnt, msg) {
-        return new Promise(function(resolve) {
-            mouseEvent('mousemove', pos[0], pos[1]);
+        delete gd._lastHoverTime;
+        mouseEvent('mousemove', pos[0], pos[1]);
 
-            setTimeout(function() {
-                var hoverText = d3.selectAll('g.hovertext');
-                expect(hoverText.size()).toEqual(cnt, msg);
-
-                resolve();
-            }, HOVERMINTIME);
-        });
+        var hoverText = d3.selectAll('g.hovertext');
+        expect(hoverText.size()).toBe(cnt, msg);
     }
 
     it('should work', function(done) {
         var data = [{ y: [2, 1, 2] }],
-            layout = { width: 600, height: 500 },
-            gd = createGraphDiv();
+            layout = { width: 600, height: 500 };
+        gd = createGraphDiv();
 
         var pos0 = [305, 403],
             pos1 = [401, 122];
@@ -1034,14 +1047,18 @@ describe('Test hover label custom styling:', function() {
     function assertLabel(className, expectation) {
         var g = d3.select('g.' + className);
 
-        var path = g.select('path');
-        expect(path.style('fill')).toEqual(expectation.path[0], 'bgcolor');
-        expect(path.style('stroke')).toEqual(expectation.path[1], 'bordercolor');
+        if(expectation === null) {
+            expect(g.size()).toBe(0);
+        } else {
+            var path = g.select('path');
+            expect(path.style('fill')).toEqual(expectation.path[0], 'bgcolor');
+            expect(path.style('stroke')).toEqual(expectation.path[1], 'bordercolor');
 
-        var text = g.select({hovertext: 'text.nums', axistext: 'text'}[className]);
-        expect(parseInt(text.style('font-size'))).toEqual(expectation.text[0], 'font.size');
-        expect(text.style('font-family').split(',')[0]).toEqual(expectation.text[1], 'font.family');
-        expect(text.style('fill')).toEqual(expectation.text[2], 'font.color');
+            var text = g.select({hovertext: 'text.nums', axistext: 'text'}[className]);
+            expect(parseInt(text.style('font-size'))).toEqual(expectation.text[0], 'font.size');
+            expect(text.style('font-family').split(',')[0]).toEqual(expectation.text[1], 'font.family');
+            expect(text.style('fill')).toEqual(expectation.text[2], 'font.color');
+        }
     }
 
     function assertPtLabel(expectation) {
@@ -1112,8 +1129,41 @@ describe('Test hover label custom styling:', function() {
                 text: [13, 'Arial', 'rgb(255, 255, 255)']
             });
 
+            // test arrayOk case
+            return Plotly.restyle(gd, 'hoverinfo', [['skip', 'name', 'x']]);
+        })
+        .then(function() {
+            _hover(gd, { xval: gd._fullData[0].x[0] });
+
+            assertPtLabel(null);
+            assertCommonLabel(null);
+        })
+        .then(function() {
+            _hover(gd, { xval: gd._fullData[0].x[1] });
+
+            assertPtLabel({
+                path: ['rgb(255, 255, 255)', 'rgb(68, 68, 68)'],
+                text: [20, 'Arial', 'rgb(0, 128, 0)']
+            });
+            assertCommonLabel(null);
+        })
+        .then(function() {
+            _hover(gd, { xval: gd._fullData[0].x[2] });
+
+            assertPtLabel(null);
+            assertCommonLabel({
+                path: ['rgb(255, 255, 255)', 'rgb(255, 255, 255)'],
+                text: [13, 'Arial', 'rgb(255, 255, 255)']
+            });
+
             // test base case
-            return Plotly.update(gd, { hoverlabel: null }, { hoverlabel: null });
+            return Plotly.update(gd, {
+                hoverlabel: null,
+                // all these items should be display as 'all'
+                hoverinfo: [['i+dont+what+im+doing', null, undefined]]
+            }, {
+                hoverlabel: null
+            });
         })
         .then(function() {
             _hover(gd, { xval: gd._fullData[0].x[0] });
@@ -1126,6 +1176,44 @@ describe('Test hover label custom styling:', function() {
                 path: ['rgb(68, 68, 68)', 'rgb(255, 255, 255)'],
                 text: [13, 'Arial', 'rgb(255, 255, 255)']
             });
+        })
+        .then(function() {
+            _hover(gd, { xval: gd._fullData[0].x[1] });
+
+            assertPtLabel({
+                path: ['rgb(0, 0, 0)', 'rgb(255, 255, 255)'],
+                text: [13, 'Arial', 'rgb(255, 255, 255)']
+            });
+            assertCommonLabel({
+                path: ['rgb(68, 68, 68)', 'rgb(255, 255, 255)'],
+                text: [13, 'Arial', 'rgb(255, 255, 255)']
+            });
+        })
+        .then(function() {
+            _hover(gd, { xval: gd._fullData[0].x[2] });
+
+            assertPtLabel({
+                path: ['rgb(0, 255, 255)', 'rgb(68, 68, 68)'],
+                text: [13, 'Arial', 'rgb(68, 68, 68)']
+            });
+            assertCommonLabel({
+                path: ['rgb(68, 68, 68)', 'rgb(255, 255, 255)'],
+                text: [13, 'Arial', 'rgb(255, 255, 255)']
+            });
+
+            // test insufficient arrayOk case
+            return Plotly.restyle(gd, 'hoverinfo', [['none']]);
+        })
+        .then(function() {
+            expect(gd.calcdata[0].map(function(o) { return o.hi; })).toEqual(
+                ['none', 'x+y+z+text', 'x+y+z+text'],
+                'should fill calcdata item with correct default'
+            );
+
+            _hover(gd, { xval: gd._fullData[0].x[0] });
+
+            assertPtLabel(null);
+            assertCommonLabel(null);
         })
         .then(function() {
             _hover(gd, { xval: gd._fullData[0].x[1] });
@@ -1209,5 +1297,30 @@ describe('Test hover label custom styling:', function() {
         })
         .catch(fail)
         .then(done);
+    });
+});
+
+describe('ohlc hover interactions', function() {
+    var data = [{
+        type: 'candlestick',
+        x: ['2011-01-01', '2012-01-01'],
+        open: [2, 2],
+        high: [3, 3],
+        low: [0, 0],
+        close: [3, 3],
+    }];
+
+    beforeEach(function() {
+        this.gd = createGraphDiv();
+    });
+
+    afterEach(destroyGraphDiv);
+
+    // See: https://github.com/plotly/plotly.js/issues/1807
+    it('should not fail in appendArrayPointValue', function() {
+        Plotly.plot(this.gd, data);
+        mouseEvent('mousemove', 203, 213);
+
+        expect(d3.select('.hovertext').size()).toBe(1);
     });
 });

@@ -1,6 +1,7 @@
 var d3 = require('d3');
 var Plotly = require('@lib/index');
 var Drawing = require('@src/components/drawing');
+var svgTextUtils = require('@src/lib/svg_text_utils');
 var createGraphDiv = require('../assets/create_graph_div');
 var destroyGraphDiv = require('../assets/destroy_graph_div');
 var fail = require('../assets/fail_test');
@@ -355,14 +356,14 @@ describe('Drawing', function() {
         afterEach(destroyGraphDiv);
 
         function assertBBox(actual, expected) {
-            expect(actual.height).toEqual(expected.height, 'height');
-            expect(actual.top).toEqual(expected.top, 'top');
-            expect(actual.bottom).toEqual(expected.bottom, 'bottom');
-
-            var TOL = 3;
-            expect(actual.width).toBeWithin(expected.width, TOL, 'width');
-            expect(actual.left).toBeWithin(expected.left, TOL, 'left');
-            expect(actual.right).toBeWithin(expected.right, TOL, 'right');
+            [
+                'height', 'top', 'bottom',
+                'width', 'left', 'right'
+            ].forEach(function(dim) {
+                // give larger dimensions some extra tolerance
+                var tol = Math.max(expected[dim] / 10, 3);
+                expect(actual[dim]).toBeWithin(expected[dim], tol, dim);
+            });
         }
 
         it('should update bounding box dimension on window scroll', function(done) {
@@ -381,7 +382,7 @@ describe('Drawing', function() {
                 width: 500
             })
             .then(function() {
-                var node = d3.select('text.annotation').node();
+                var node = d3.select('text.annotation-text').node();
                 assertBBox(Drawing.bBox(node), {
                     height: 14,
                     width: 27.671875,
@@ -395,7 +396,7 @@ describe('Drawing', function() {
                 return Plotly.relayout(gd, 'annotations[0].text', 'HELLO');
             })
             .then(function() {
-                var node = d3.select('text.annotation').node();
+                var node = d3.select('text.annotation-text').node();
                 assertBBox(Drawing.bBox(node), {
                     height: 14,
                     width: 41.015625,
@@ -409,7 +410,7 @@ describe('Drawing', function() {
                 return Plotly.relayout(gd, 'annotations[0].font.size', 20);
             })
             .then(function() {
-                var node = d3.select('text.annotation').node();
+                var node = d3.select('text.annotation-text').node();
                 assertBBox(Drawing.bBox(node), {
                     height: 22,
                     width: 66.015625,
@@ -421,6 +422,28 @@ describe('Drawing', function() {
             })
             .catch(fail)
             .then(done);
+        });
+
+        it('works with dummy nodes created in Drawing.tester', function() {
+            var node = Drawing.tester.append('text')
+                .text('bananas')
+                .call(Drawing.font, '"Open Sans", verdana, arial, sans-serif', 19)
+                .call(svgTextUtils.convertToTspans).node();
+
+            expect(node.parentNode).toBe(Drawing.tester.node());
+
+            assertBBox(Drawing.bBox(node), {
+                height: 21,
+                width: 76,
+                left: 0,
+                top: -17,
+                right: 76,
+                bottom: 4
+            });
+
+            expect(node.parentNode).toBe(Drawing.tester.node());
+
+            node.parentNode.removeChild(node);
         });
     });
 });

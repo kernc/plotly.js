@@ -21,6 +21,8 @@ var animationAttributes = require('../plots/animation_attributes');
 var polarAreaAttrs = require('../plots/polar/area_attributes');
 var polarAxisAttrs = require('../plots/polar/axis_attributes');
 
+var editTypes = require('./edit_types');
+
 var extendFlat = Lib.extendFlat;
 var extendDeep = Lib.extendDeep;
 
@@ -62,7 +64,11 @@ exports.get = function() {
     return {
         defs: {
             valObjects: Lib.valObjects,
-            metaKeys: UNDERSCORE_ATTRS.concat(['description', 'role'])
+            metaKeys: UNDERSCORE_ATTRS.concat(['description', 'role']),
+            editTypes: {
+                traces: editTypes.traces(),
+                layout: editTypes.layout()
+            }
         },
 
         traces: traces,
@@ -156,17 +162,23 @@ exports.findArrayAttributes = function(trace) {
         return stack.join('.');
     }
 
-    exports.crawl(trace._module.attributes, callback);
+    exports.crawl(baseAttributes, callback);
+    if(trace._module && trace._module.attributes) {
+        exports.crawl(trace._module.attributes, callback);
+    }
 
     if(trace.transforms) {
         var transforms = trace.transforms;
 
         for(var i = 0; i < transforms.length; i++) {
             var transform = transforms[i];
+            var module = transform._module;
 
-            stack = ['transforms[' + i + ']'];
+            if(module) {
+                stack = ['transforms[' + i + ']'];
 
-            exports.crawl(transform._module.attributes, callback, 1);
+                exports.crawl(module.attributes, callback, 1);
+            }
         }
     }
 
@@ -176,9 +188,8 @@ exports.findArrayAttributes = function(trace) {
     // At the moment, we need this block to make sure that
     // ohlc and candlestick 'open', 'high', 'low', 'close' can be
     // used with filter ang groupby transforms.
-    if(trace._fullInput) {
+    if(trace._fullInput && trace._fullInput._module && trace._fullInput._module.attributes) {
         exports.crawl(trace._fullInput._module.attributes, callback);
-
         arrayAttributes = Lib.filterUnique(arrayAttributes);
     }
 

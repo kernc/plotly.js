@@ -60,6 +60,15 @@ function assertSrcContents() {
     var licenseStr = licenseSrc.substring(2, licenseSrc.length - 2);
     var logs = [];
 
+    // These are forbidden in IE *only in SVG* but since
+    // that's 99% of what we do here, we'll forbid them entirely
+    // until there's some HTML use case where we need them.
+    // (not sure what we'd do then, but we'd think of something!)
+    var IE_SVG_BLACK_LIST = ['innerHTML', 'parentElement', 'children'];
+
+    // Forbidden in IE in any context
+    var IE_BLACK_LIST = ['classList'];
+
     glob(combineGlobs([srcGlob, libGlob]), function(err, files) {
         files.forEach(function(file) {
             var code = fs.readFileSync(file, 'utf-8');
@@ -69,9 +78,18 @@ function assertSrcContents() {
             falafel(code, {onComment: comments, locations: true}, function(node) {
                 // look for .classList
                 if(node.type === 'MemberExpression') {
-                    var parts = node.source().split('.');
-                    if(parts[parts.length - 1] === 'classList') {
-                        logs.push(file + ' : contains .classList (IE failure)');
+                    var source = node.source();
+                    var parts = source.split('.');
+                    var lastPart = parts[parts.length - 1];
+
+                    if(source === 'Math.sign') {
+                        logs.push(file + ' : contains Math.sign (IE failure)');
+                    }
+                    else if(IE_BLACK_LIST.indexOf(lastPart) !== -1) {
+                        logs.push(file + ' : contains .' + lastPart + ' (IE failure)');
+                    }
+                    else if(IE_SVG_BLACK_LIST.indexOf(lastPart) !== -1) {
+                        logs.push(file + ' : contains .' + lastPart + ' (IE failure in SVG)');
                     }
                 }
             });

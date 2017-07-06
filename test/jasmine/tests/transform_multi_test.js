@@ -17,6 +17,17 @@ describe('general transforms:', function() {
 
     var traceIn, traceOut;
 
+    it('passes through empty transforms', function() {
+        traceIn = {
+            y: [2, 1, 2],
+            transforms: [{}]
+        };
+
+        traceOut = Plots.supplyTraceDefaults(traceIn, 0, fullLayout);
+
+        expect(traceOut.transforms).toEqual([{}]);
+    });
+
     it('supplyTraceDefaults should supply the transform defaults', function() {
         traceIn = {
             y: [2, 1, 2],
@@ -227,7 +238,13 @@ describe('multiple transforms:', function() {
         transforms: [{
             type: 'groupby',
             groups: ['a', 'a', 'b', 'a', 'b', 'b', 'a'],
-            style: { a: {marker: {color: 'red'}}, b: {marker: {color: 'blue'}} }
+            styles: [{
+                target: 'a',
+                value: {marker: {color: 'red'}},
+            }, {
+                target: 'b',
+                value: {marker: {color: 'blue'}}
+            }]
         }, {
             type: 'filter',
             operation: '>'
@@ -241,7 +258,13 @@ describe('multiple transforms:', function() {
         transforms: [{
             type: 'groupby',
             groups: ['b', 'a', 'b', 'b', 'b', 'a', 'a'],
-            style: { a: {marker: {color: 'green'}}, b: {marker: {color: 'black'}} }
+            styles: [{
+                target: 'a',
+                value: {marker: {color: 'green'}}
+            }, {
+                target: 'b',
+                value: {marker: {color: 'black'}}
+            }]
         }, {
             type: 'filter',
             operation: '<',
@@ -331,7 +354,13 @@ describe('multiple transforms:', function() {
             expect(gd._fullData[1].marker.opacity).toEqual(1);
 
             return Plotly.restyle(gd, {
-                'transforms[0].style': { a: {marker: {color: 'green'}}, b: {marker: {color: 'red'}} },
+                'transforms[0].styles': [[{
+                    target: 'a',
+                    value: {marker: {color: 'green'}}
+                }, {
+                    target: 'b',
+                    value: {marker: {color: 'red'}}
+                }]],
                 'marker.opacity': 0.4
             });
         }).then(function() {
@@ -418,6 +447,26 @@ describe('multiple transforms:', function() {
 
 });
 
+describe('invalid transforms', function() {
+    var gd;
+
+    beforeEach(function() {
+        gd = createGraphDiv();
+    });
+
+    afterEach(destroyGraphDiv);
+
+    it('ignores them', function(done) {
+        Plotly.plot(gd, [{
+            y: [1, 2, 3],
+            transforms: [{}]
+        }]).then(function() {
+            expect(gd._fullData[0].transforms.length).toEqual(1);
+            done();
+        });
+    });
+});
+
 describe('multiple traces with transforms:', function() {
     'use strict';
 
@@ -439,7 +488,13 @@ describe('multiple traces with transforms:', function() {
         transforms: [{
             type: 'groupby',
             groups: ['a', 'a', 'b', 'a', 'b', 'b', 'a'],
-            style: { a: {marker: {color: 'red'}}, b: {marker: {color: 'blue'}} }
+            styles: [{
+                target: 'a',
+                value: {marker: {color: 'red'}},
+            }, {
+                target: 'b',
+                value: {marker: {color: 'blue'}}
+            }]
         }, {
             type: 'filter',
             operation: '>'
@@ -510,7 +565,13 @@ describe('multiple traces with transforms:', function() {
             });
 
             return Plotly.restyle(gd, {
-                'transforms[0].style': { a: {marker: {color: 'green'}}, b: {marker: {color: 'red'}} },
+                'transforms[0].styles': [[{
+                    target: 'a',
+                    value: {marker: {color: 'green'}},
+                }, {
+                    target: 'b',
+                    value: {marker: {color: 'red'}}
+                }]],
                 'marker.opacity': [0.4, 0.6]
             });
         }).then(function() {

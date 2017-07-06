@@ -98,39 +98,48 @@ describe('Test annotations', function() {
             expect(layoutOut.annotations[0].ax).toEqual('2004-07-01');
         });
 
-        it('should convert ax/ay category coordinates to linear coords', function() {
+        it('should clean *xclick* and *yclick* values', function() {
             var layoutIn = {
                 annotations: [{
-                    showarrow: true,
-                    axref: 'x',
-                    ayref: 'y',
-                    x: 'c',
-                    ax: 1,
-                    y: 'A',
-                    ay: 3
+                    clicktoshow: 'onoff',
+                    xref: 'paper',
+                    yref: 'paper',
+                    xclick: '10',
+                    yclick: '30'
+                }, {
+                    clicktoshow: 'onoff',
+                    xref: 'x',
+                    yref: 'y',
+                    xclick: '1',
+                    yclick: '2017-13-50'
+                }, {
+                    clicktoshow: 'onoff',
+                    xref: 'x2',
+                    yref: 'y2',
+                    xclick: '2',
+                    yclick: 'A'
                 }]
             };
 
             var layoutOut = {
-                xaxis: {
-                    type: 'category',
-                    _categories: ['a', 'b', 'c'],
-                    range: [-0.5, 2.5] },
-                yaxis: {
-                    type: 'category',
-                    _categories: ['A', 'B', 'C'],
-                    range: [-0.5, 3]
-                }
+                xaxis: {type: 'linear', range: [0, 1]},
+                yaxis: {type: 'date', range: ['2000-01-01', '2018-01-01']},
+                xaxis2: {type: 'log', range: [1, 2]},
+                yaxis2: {type: 'category', range: [0, 1]}
             };
-            Axes.setConvert(layoutOut.xaxis);
-            Axes.setConvert(layoutOut.yaxis);
+
+            ['xaxis', 'xaxis2', 'yaxis', 'yaxis2'].forEach(function(k) {
+                Axes.setConvert(layoutOut[k]);
+            });
 
             _supply(layoutIn, layoutOut);
 
-            expect(layoutOut.annotations[0].x).toEqual(2);
-            expect(layoutOut.annotations[0].ax).toEqual(1);
-            expect(layoutOut.annotations[0].y).toEqual(0);
-            expect(layoutOut.annotations[0].ay).toEqual(3);
+            expect(layoutOut.annotations[0]._xclick).toBe(10, 'paper x');
+            expect(layoutOut.annotations[0]._yclick).toBe(30, 'paper y');
+            expect(layoutOut.annotations[1]._xclick).toBe(1, 'linear');
+            expect(layoutOut.annotations[1]._yclick).toBe(undefined, 'invalid date');
+            expect(layoutOut.annotations[2]._xclick).toBe(2, 'log');
+            expect(layoutOut.annotations[2]._yclick).toBe('A', 'category');
         });
     });
 });
@@ -149,6 +158,12 @@ describe('annotations relayout', function() {
 
         var mockData = Lib.extendDeep([], mock.data),
             mockLayout = Lib.extendDeep({}, mock.layout);
+
+        // insert some MathJax text - to make sure we fall back correctly
+        // when MathJax is not provided (as is the case in our normal
+        // jasmine test suite)
+        expect(typeof MathJax).toBe('undefined');
+        mockLayout.annotations[14].text = '$x+y+z$';
 
         Plotly.plot(gd, mockData, mockLayout).then(done);
 
@@ -543,13 +558,16 @@ describe('annotations log/linear axis changes', function() {
 describe('annotations autorange', function() {
     'use strict';
 
-    var mock = Lib.extendDeep({}, require('@mocks/annotations-autorange.json'));
+    var mock;
     var gd;
 
     beforeAll(function() {
         jasmine.addMatchers(customMatchers);
+    });
 
+    beforeEach(function() {
         gd = createGraphDiv();
+        mock = Lib.extendDeep({}, require('@mocks/annotations-autorange.json'));
     });
 
     afterEach(destroyGraphDiv);
@@ -579,6 +597,22 @@ describe('annotations autorange', function() {
         expect(fullLayout.yaxis3.range).toBeCloseToArray(y3, PREC, 'yaxis3');
     }
 
+    function assertVisible(indices) {
+        // right now we keep the annotation groups around when they're invisible,
+        // they just don't have any graphical elements in them. Might be better
+        // to get rid of the groups even, but this test will produce the right
+        // results either way, showing that the annotation is or isn't drawn.
+        for(var i = 0; i < gd.layout.annotations.length; i++) {
+            var selectorBase = '.annotation[data-index="' + i + '"]';
+            var annotationGraphicalItems = d3.selectAll(
+                selectorBase + ' text,' +
+                selectorBase + ' rect,' +
+                selectorBase + ' path');
+            expect(annotationGraphicalItems.size() > 0)
+                .toBe(indices.indexOf(i) !== -1, selectorBase);
+        }
+    }
+
     it('should adapt to relayout calls', function(done) {
         Plotly.plot(gd, mock).then(function() {
             assertRanges(
@@ -586,6 +620,7 @@ describe('annotations autorange', function() {
                 ['2000-11-13', '2001-04-21'], [-0.069, 3.917],
                 [0.88, 2.05], [0.92, 2.08]
             );
+            assertVisible([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
 
             return Plotly.relayout(gd, {
                 'annotations[0].visible': false,
@@ -599,6 +634,7 @@ describe('annotations autorange', function() {
                 ['2001-01-18', '2001-03-27'], [-0.069, 3.917],
                 [1.44, 2.1], [0.92, 2.08]
             );
+            assertVisible([1, 2, 3, 5, 6, 7, 9, 10, 11, 12, 13]);
 
             return Plotly.relayout(gd, {
                 'annotations[2].visible': false,
@@ -612,6 +648,7 @@ describe('annotations autorange', function() {
                 ['2001-01-31 23:59:59.999', '2001-02-01 00:00:00.001'], [-0.069, 3.917],
                 [0.5, 2.5], [0.92, 2.08]
             );
+            assertVisible([1, 3, 6, 7, 10, 11, 12, 13]);
 
             return Plotly.relayout(gd, {
                 'annotations[0].visible': true,
@@ -628,6 +665,27 @@ describe('annotations autorange', function() {
                 ['2000-11-13', '2001-04-21'], [-0.069, 3.917],
                 [0.88, 2.05], [0.92, 2.08]
             );
+            assertVisible([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
+
+            // check that off-plot annotations are hidden - zoom in to
+            // only one of the four on each subplot
+            return Plotly.relayout(gd, {
+                'xaxis.range': [1.4, 1.6],
+                'yaxis.range': [0.9, 1.1],
+                'xaxis2.range': ['2001-01-15', '2001-02-15'],
+                'yaxis2.range': [0.9, 1.1],
+                'xaxis3.range': [1.9, 2.1],
+                'yaxis3.range': [1.4, 1.6]
+            });
+        })
+        .then(function() {
+            assertRanges([1.4, 1.6], [0.9, 1.1],
+                ['2001-01-15', '2001-02-15'], [0.9, 1.1],
+                [1.9, 2.1], [1.4, 1.6]
+            );
+            // only one annotation on each subplot, plus the two paper-referenced
+            // are visible after zooming in
+            assertVisible([3, 7, 9, 12, 13]);
         })
         .catch(failTest)
         .then(done);

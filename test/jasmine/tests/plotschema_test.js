@@ -11,8 +11,9 @@ describe('plot schema', function() {
     var isValObject = Plotly.PlotSchema.isValObject,
         isPlainObject = Lib.isPlainObject;
 
-    var VALTYPES = Object.keys(valObjects),
-        ROLES = ['info', 'style', 'data'];
+    var VALTYPES = Object.keys(valObjects);
+    var ROLES = ['info', 'style', 'data'];
+    var editTypes = plotSchema.defs.editTypes;
 
     function assertPlotSchema(callback) {
         var traces = plotSchema.traces;
@@ -179,6 +180,27 @@ describe('plot schema', function() {
         );
     });
 
+    it('has valid or no `editType` in every attribute', function() {
+        var validEditTypes = editTypes.traces;
+        assertPlotSchema(
+            function(attr, attrName, attrs) {
+                if(attrs === plotSchema.layout.layoutAttributes) {
+                    // detect when we switch from trace attributes to layout
+                    // attributes - depends on doing all the trace attributes
+                    // first, then switching to layout attributes
+                    validEditTypes = editTypes.layout;
+                }
+                if(attr.editType !== undefined) {
+                    var editTypeParts = attr.editType.split('+');
+                    editTypeParts.forEach(function(editTypePart) {
+                        expect(validEditTypes[editTypePart])
+                            .toBe(false, editTypePart);
+                    });
+                }
+            }
+        );
+    });
+
     it('should work with registered transforms', function() {
         var valObjects = plotSchema.transforms.filter.attributes,
             attrNames = Object.keys(valObjects);
@@ -186,6 +208,13 @@ describe('plot schema', function() {
         ['operation', 'value', 'target'].forEach(function(k) {
             expect(attrNames).toContain(k);
         });
+    });
+
+    it('should work with registered transforms (2)', function() {
+        var valObjects = plotSchema.transforms.groupby.attributes;
+        var items = valObjects.styles.items || {};
+
+        expect(Object.keys(items)).toEqual(['style']);
     });
 
     it('should work with registered components', function() {

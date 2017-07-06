@@ -20,6 +20,9 @@ var Lib = require('../../lib');
 var svgTextUtils = require('../../lib/svg_text_utils');
 
 var xmlnsNamespaces = require('../../constants/xmlns_namespaces');
+var alignment = require('../../constants/alignment');
+var LINE_SPACING = alignment.LINE_SPACING;
+
 var subTypes = require('../../traces/scatter/subtypes');
 var makeBubbleSizeFn = require('../../traces/scatter/make_bubble_size_func');
 
@@ -31,7 +34,7 @@ var drawing = module.exports = {};
 
 drawing.font = function(s, family, size, color) {
     // also allow the form font(s, {family, size, color})
-    if(family && family.family) {
+    if(Lib.isPlainObject(family)) {
         color = family.color;
         size = family.size;
         family = family.family;
@@ -41,13 +44,19 @@ drawing.font = function(s, family, size, color) {
     if(color) s.call(Color.fill, color);
 };
 
+/*
+ * Positioning helpers
+ * Note: do not use `setPosition` with <text> nodes modified by
+ * `svgTextUtils.convertToTspans`. Use `svgTextUtils.positionText`
+ * instead, so that <tspan.line> elements get updated to match.
+ */
 drawing.setPosition = function(s, x, y) { s.attr('x', x).attr('y', y); };
 drawing.setSize = function(s, w, h) { s.attr('width', w).attr('height', h); };
 drawing.setRect = function(s, x, y, w, h) {
     s.call(drawing.setPosition, x, y).call(drawing.setSize, w, h);
 };
 
-/** Translate / remove node
+/** Translate node
  *
  * @param {object} d : calcdata point item
  * @param {sel} sel : d3 selction of node to translate
@@ -56,7 +65,7 @@ drawing.setRect = function(s, x, y, w, h) {
  *
  * @return {boolean} :
  *  true if selection got translated
- *  false if selection got removed
+ *  false if selection could not get translated
  */
 drawing.translatePoint = function(d, sel, xa, ya) {
     // put xp and yp into d if pixel scaling is already done
@@ -71,7 +80,6 @@ drawing.translatePoint = function(d, sel, xa, ya) {
             sel.attr('transform', 'translate(' + x + ',' + y + ')');
         }
     } else {
-        sel.remove();
         return false;
     }
 
@@ -155,6 +163,16 @@ drawing.dashStyle = function(dash, lineWidth) {
     // otherwise user wrote the dasharray themselves - leave it be
 
     return dash;
+};
+
+// Same as fillGroupStyle, except in this case the selection may be a transition
+drawing.singleFillStyle = function(sel) {
+    var node = d3.select(sel.node());
+    var data = node.data();
+    var fillcolor = (((data[0] || [])[0] || {}).trace || {}).fillcolor;
+    if(fillcolor) {
+        sel.call(Color.fill, fillcolor);
+    }
 };
 
 drawing.fillGroupStyle = function(s) {
@@ -383,7 +401,7 @@ drawing.singlePointStyle = function(d, sel, trace, markerScale, lineScale, gd) {
 
 };
 
-drawing.pointStyle = function(s, trace) {
+drawing.pointStyle = function(s, trace, gd) {
     if(!s.size()) return;
 
     // allow array marker and marker line colors to be
@@ -391,7 +409,6 @@ drawing.pointStyle = function(s, trace) {
     var marker = trace.marker;
     var markerScale = drawing.tryColorscale(marker, '');
     var lineScale = drawing.tryColorscale(marker, 'line');
-    var gd = Lib.getPlotDiv(s.node());
 
     s.each(function(d) {
         drawing.singlePointStyle(d, d3.select(this), trace, markerScale, lineScale, gd);
@@ -412,9 +429,8 @@ drawing.tryColorscale = function(marker, prefix) {
 };
 
 // draw text at points
-var TEXTOFFSETSIGN = {start: 1, end: -1, middle: 0, bottom: 1, top: -1},
-    LINEEXPAND = 1.3;
-drawing.textPointStyle = function(s, trace) {
+var TEXTOFFSETSIGN = {start: 1, end: -1, middle: 0, bottom: 1, top: -1};
+drawing.textPointStyle = function(s, trace, gd) {
     s.each(function(d) {
         var p = d3.select(this),
             text = d.tx || trace.text;
@@ -445,21 +461,16 @@ drawing.textPointStyle = function(s, trace) {
                 d.tc || trace.textfont.color)
             .attr('text-anchor', h)
             .text(text)
-            .call(svgTextUtils.convertToTspans);
-        var pgroup = d3.select(this.parentNode),
-            tspans = p.selectAll('tspan.line'),
-            numLines = ((tspans[0].length || 1) - 1) * LINEEXPAND + 1,
-            dx = TEXTOFFSETSIGN[h] * r,
-            dy = fontSize * 0.75 + TEXTOFFSETSIGN[v] * r +
+            .call(svgTextUtils.convertToTspans, gd);
+
+        var pgroup = d3.select(this.parentNode);
+        var numLines = (svgTextUtils.lineCount(p) - 1) * LINE_SPACING + 1;
+        var dx = TEXTOFFSETSIGN[h] * r;
+        var dy = fontSize * 0.75 + TEXTOFFSETSIGN[v] * r +
                 (TEXTOFFSETSIGN[v] - 1) * numLines * fontSize / 2;
 
         // fix the overall text group position
         pgroup.attr('transform', 'translate(' + dx + ',' + dy + ')');
-
-        // then fix multiline text
-        if(numLines > 1) {
-            tspans.attr({ x: p.attr('x'), y: p.attr('y') });
-        }
     });
 };
 
@@ -558,9 +569,6 @@ drawing.steps = function(shape) {
 
 // off-screen svg render testing element, shared by the whole page
 // uses the id 'js-plotly-tester' and stores it in drawing.tester
-// makes a hash of cached text items in tester.node()._cache
-// so we can add references to rendered text (including all info
-// needed to fully determine its bounding rect)
 drawing.makeTester = function() {
     var tester = d3.select('body')
         .selectAll('#js-plotly-tester')
@@ -590,49 +598,119 @@ drawing.makeTester = function() {
             fill: 'black'
         });
 
-    if(!tester.node()._cache) {
-        tester.node()._cache = {};
-    }
-
     drawing.tester = tester;
     drawing.testref = testref;
 };
 
-// use our offscreen tester to get a clientRect for an element,
-// in a reference frame where it isn't translated and its anchor
-// point is at (0,0)
-// always returns a copy of the bbox, so the caller can modify it safely
-var savedBBoxes = [];
+/*
+ * use our offscreen tester to get a clientRect for an element,
+ * in a reference frame where it isn't translated (or transformed) and
+ * its anchor point is at (0,0)
+ * always returns a copy of the bbox, so the caller can modify it safely
+ *
+ * @param {SVGElement} node: the element to measure. If possible this should be
+ *   a <text> or MathJax <g> element that's already passed through
+ *   `convertToTspans` because in that case we can cache the results, but it's
+ *   possible to pass in any svg element.
+ *
+ * @param {boolean} inTester: is this element already in `drawing.tester`?
+ *   If you are measuring a dummy element, rather than one you really intend
+ *   to use on the plot, making it in `drawing.tester` in the first place
+ *   allows us to test faster because it cuts out cloning and appending it.
+ *
+ * @param {string} hash: for internal use only, if we already know the cache key
+ *   for this element beforehand.
+ *
+ * @return {object}: a plain object containing the width, height, left, right,
+ *   top, and bottom of `node`
+ */
+drawing.savedBBoxes = {};
+var savedBBoxesCount = 0;
 var maxSavedBBoxes = 10000;
 
-drawing.bBox = function(node) {
-    // cache elements we've already measured so we don't have to
-    // remeasure the same thing many times
-    var saveNum = node.attributes['data-bb'];
-    if(saveNum && saveNum.value) {
-        return Lib.extendFlat({}, savedBBoxes[saveNum.value]);
+drawing.bBox = function(node, inTester, hash) {
+    /*
+     * Cache elements we've already measured so we don't have to
+     * remeasure the same thing many times
+     * We have a few bBox callers though who pass a node larger than
+     * a <text> or a MathJax <g>, such as an axis group containing many labels.
+     * These will not generate a hash (unless we figure out an appropriate
+     * hash key for them) and thus we will not hash them.
+     */
+    if(!hash) hash = nodeHash(node);
+    var out;
+    if(hash) {
+        out = drawing.savedBBoxes[hash];
+        if(out) return Lib.extendFlat({}, out);
+    }
+    else if(node.childNodes.length === 1) {
+        /*
+         * If we have only one child element, which is itself hashable, make
+         * a new hash from this element plus its x,y,transform
+         * These bounding boxes *include* x,y,transform - mostly for use by
+         * callers trying to avoid overlaps (ie titles)
+         */
+        var innerNode = node.childNodes[0];
+
+        hash = nodeHash(innerNode);
+        if(hash) {
+            var x = +innerNode.getAttribute('x') || 0;
+            var y = +innerNode.getAttribute('y') || 0;
+            var transform = innerNode.getAttribute('transform');
+
+            if(!transform) {
+                // in this case, just varying x and y, don't bother caching
+                // the final bBox because the alteration is quick.
+                var innerBB = drawing.bBox(innerNode, false, hash);
+                if(x) {
+                    innerBB.left += x;
+                    innerBB.right += x;
+                }
+                if(y) {
+                    innerBB.top += y;
+                    innerBB.bottom += y;
+                }
+                return innerBB;
+            }
+            /*
+             * else we have a transform - rather than make a complicated
+             * (and error-prone and probably slow) transform parser/calculator,
+             * just continue on calculating the boundingClientRect of the group
+             * and use the new composite hash to cache it.
+             * That said, `innerNode.transform.baseVal` is an array of
+             * `SVGTransform` objects, that *do* seem to have a nice matrix
+             * multiplication interface that we could use to avoid making
+             * another getBoundingClientRect call...
+             */
+            hash += '~' + x + '~' + y + '~' + transform;
+
+            out = drawing.savedBBoxes[hash];
+            if(out) return Lib.extendFlat({}, out);
+        }
+    }
+    var testNode, tester;
+    if(inTester) {
+        testNode = node;
+    }
+    else {
+        tester = drawing.tester.node();
+
+        // copy the node to test into the tester
+        testNode = node.cloneNode(true);
+        tester.appendChild(testNode);
     }
 
-    var tester3 = drawing.tester;
-    var tester = tester3.node();
-
-    // copy the node to test into the tester
-    var testNode = node.cloneNode(true);
-    tester.appendChild(testNode);
-
-    // standardize its position... do we really want to do this?
-    d3.select(testNode).attr({
-        x: 0,
-        y: 0,
-        transform: ''
-    });
+    // standardize its position (and newline tspans if any)
+    d3.select(testNode)
+        .attr('transform', null)
+        .call(svgTextUtils.positionText, 0, 0);
 
     var testRect = testNode.getBoundingClientRect();
     var refRect = drawing.testref
         .node()
         .getBoundingClientRect();
 
-    tester.removeChild(testNode);
+    if(!inTester) tester.removeChild(testNode);
 
     var bb = {
         height: testRect.height,
@@ -646,17 +724,28 @@ drawing.bBox = function(node) {
     // make sure we don't have too many saved boxes,
     // or a long session could overload on memory
     // by saving boxes for long-gone elements
-    if(savedBBoxes.length >= maxSavedBBoxes) {
-        d3.selectAll('[data-bb]').attr('data-bb', null);
-        savedBBoxes = [];
+    if(savedBBoxesCount >= maxSavedBBoxes) {
+        drawing.savedBBoxes = {};
+        savedBBoxesCount = 0;
     }
 
     // cache this bbox
-    node.setAttribute('data-bb', savedBBoxes.length);
-    savedBBoxes.push(bb);
+    if(hash) drawing.savedBBoxes[hash] = bb;
+    savedBBoxesCount++;
 
     return Lib.extendFlat({}, bb);
 };
+
+// capture everything about a node (at least in our usage) that
+// impacts its bounding box, given that bBox clears x, y, and transform
+function nodeHash(node) {
+    var inputText = node.getAttribute('data-unformatted');
+    if(inputText === null) return;
+    return inputText +
+        node.getAttribute('data-math') +
+        node.getAttribute('text-anchor') +
+        node.getAttribute('style');
+}
 
 /*
  * make a robust clipPath url from a local id
@@ -810,14 +899,4 @@ drawing.setTextPointsScale = function(selection, xScale, yScale) {
 
         el.attr('transform', transforms.join(' '));
     });
-};
-
-drawing.measureText = function(tester, text, font) {
-    var dummyText = tester.append('text')
-        .text(text)
-        .call(drawing.font, font);
-
-    var bbox = drawing.bBox(dummyText.node());
-    dummyText.remove();
-    return bbox;
 };

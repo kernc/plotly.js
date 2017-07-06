@@ -11,6 +11,7 @@
 
 var polygon = require('../../lib/polygon');
 var color = require('../../components/color');
+var appendArrayPointValue = require('../../components/fx/helpers').appendArrayPointValue;
 
 var axes = require('./axes');
 var constants = require('./constants');
@@ -22,7 +23,7 @@ var MINSELECT = constants.MINSELECT;
 function getAxId(ax) { return ax._id; }
 
 module.exports = function prepSelect(e, startX, startY, dragOptions, mode) {
-    var plot = dragOptions.gd._fullLayout._zoomlayer,
+    var zoomLayer = dragOptions.gd._fullLayout._zoomlayer,
         dragBBox = dragOptions.element.getBoundingClientRect(),
         xs = dragOptions.plotinfo.xaxis._offset,
         ys = dragOptions.plotinfo.yaxis._offset,
@@ -42,7 +43,7 @@ module.exports = function prepSelect(e, startX, startY, dragOptions, mode) {
         pts = filteredPolygon([[x0, y0]], constants.BENDPX);
     }
 
-    var outlines = plot.selectAll('path.select-outline').data([1, 2]);
+    var outlines = zoomLayer.selectAll('path.select-outline').data([1, 2]);
 
     outlines.enter()
         .append('path')
@@ -50,7 +51,7 @@ module.exports = function prepSelect(e, startX, startY, dragOptions, mode) {
         .attr('transform', 'translate(' + xs + ', ' + ys + ')')
         .attr('d', path0 + 'Z');
 
-    var corners = plot.append('path')
+    var corners = zoomLayer.append('path')
         .attr('class', 'zoombox-corners')
         .style({
             fill: color.background,
@@ -151,7 +152,9 @@ module.exports = function prepSelect(e, startX, startY, dragOptions, mode) {
         selection = [];
         for(i = 0; i < searchTraces.length; i++) {
             searchInfo = searchTraces[i];
-            [].push.apply(selection, searchInfo.selectPoints(searchInfo, poly));
+            [].push.apply(selection, fillSelectionItem(
+                searchInfo.selectPoints(searchInfo, poly), searchInfo
+            ));
         }
 
         eventData = {points: selection};
@@ -196,3 +199,20 @@ module.exports = function prepSelect(e, startX, startY, dragOptions, mode) {
         }
     };
 };
+
+function fillSelectionItem(selection, searchInfo) {
+    if(Array.isArray(selection)) {
+        var trace = searchInfo.cd[0].trace;
+
+        for(var i = 0; i < selection.length; i++) {
+            var sel = selection[i];
+
+            sel.curveNumber = trace.index;
+            sel.data = trace._input;
+            sel.fullData = trace;
+            appendArrayPointValue(sel, trace, sel.pointNumber);
+        }
+    }
+
+    return selection;
+}

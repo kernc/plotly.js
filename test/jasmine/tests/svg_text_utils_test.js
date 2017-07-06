@@ -11,45 +11,56 @@ describe('svg+text utils', function() {
         function mockTextSVGElement(txt) {
             return d3.select('body')
                 .append('svg')
-                .attr('id', 'text')
+                .classed('text-tester', true)
                 .append('text')
                 .text(txt)
                 .call(util.convertToTspans)
                 .attr('transform', 'translate(50,50)');
         }
 
-        function assertAnchorLink(node, href) {
+        function assertAnchorLink(node, href, target, show, msg) {
             var a = node.select('a');
 
-            expect(a.attr('xlink:href')).toBe(href);
-            expect(a.attr('xlink:show')).toBe(href === null ? null : 'new');
+            if(target === undefined) target = href === null ? null : '_blank';
+            if(show === undefined) show = href === null ? null : 'new';
+
+            expect(a.attr('xlink:href')).toBe(href, msg);
+            expect(a.attr('target')).toBe(target, msg);
+            expect(a.attr('xlink:show')).toBe(show, msg);
         }
 
-        function assertTspanStyle(node, style) {
+        function assertTspanStyle(node, style, msg) {
             var tspan = node.select('tspan');
-            expect(tspan.attr('style')).toBe(style);
+            expect(tspan.attr('style')).toBe(style, msg);
         }
 
-        function assertAnchorAttrs(node, style) {
+        function assertAnchorAttrs(node, expectedAttrs, msg) {
             var a = node.select('a');
 
-            var WHITE_LIST = ['xlink:href', 'xlink:show', 'style'],
+            if(!expectedAttrs) expectedAttrs = {};
+
+            var WHITE_LIST = ['xlink:href', 'xlink:show', 'style', 'target', 'onclick'],
                 attrs = listAttributes(a.node());
 
             // check that no other attribute are found in anchor,
             // which can be lead to XSS attacks.
 
-            var hasWrongAttr = attrs.some(function(attr) {
-                return WHITE_LIST.indexOf(attr) === -1;
+            var wrongAttrs = [];
+            attrs.forEach(function(attr) {
+                if(WHITE_LIST.indexOf(attr) === -1) wrongAttrs.push(attr);
             });
 
-            expect(hasWrongAttr).toBe(false);
+            expect(wrongAttrs).toEqual([], msg);
 
+            var style = expectedAttrs.style || '';
             var fullStyle = style || '';
             if(style) fullStyle += ';';
             fullStyle += 'cursor:pointer';
 
-            expect(a.attr('style')).toBe(fullStyle);
+            expect(a.attr('style')).toBe(fullStyle, msg);
+
+            expect(a.attr('onclick')).toBe(expectedAttrs.onclick || null, msg);
+
         }
 
         function listAttributes(node) {
@@ -63,7 +74,7 @@ describe('svg+text utils', function() {
         }
 
         afterEach(function() {
-            d3.select('#text').remove();
+            d3.selectAll('.text-tester').remove();
         });
 
         it('checks for XSS attack in href', function() {
@@ -137,7 +148,7 @@ describe('svg+text utils', function() {
                 var node = mockTextSVGElement(textCase);
 
                 expect(node.text()).toEqual('Subtitle');
-                assertAnchorAttrs(node, 'font-size:300px');
+                assertAnchorAttrs(node, {style: 'font-size:300px'});
                 assertAnchorLink(node, 'XSS');
             });
         });
@@ -157,9 +168,29 @@ describe('svg+text utils', function() {
                 var node = mockTextSVGElement(textCase);
 
                 expect(node.text()).toEqual('z');
-                assertAnchorAttrs(node, 'y');
+                assertAnchorAttrs(node, {style: 'y'});
                 assertAnchorLink(node, 'x');
             });
+        });
+
+        it('accepts `target` with links and tries to translate it to `xlink:show`', function() {
+            var specs = [
+                {target: '_blank', show: 'new'},
+                {target: '_self', show: 'replace'},
+                {target: '_parent', show: 'replace'},
+                {target: '_top', show: 'replace'},
+                {target: 'some_frame_name', show: 'new'}
+            ];
+            specs.forEach(function(spec) {
+                var node = mockTextSVGElement('<a href="x" target="' + spec.target + '">link</a>');
+                assertAnchorLink(node, 'x', spec.target, spec.show, spec.target);
+            });
+        });
+
+        it('attaches onclick if popup is specified', function() {
+            var node = mockTextSVGElement('<a href="x" target="fred" popup="width=500,height=400">link</a>');
+            assertAnchorLink(node, 'x', 'fred', 'new');
+            assertAnchorAttrs(node, {onclick: 'window.open("x","fred","width=500,height=400");return false;'});
         });
 
         it('keeps query parameters in href', function() {
@@ -171,9 +202,9 @@ describe('svg+text utils', function() {
             textCases.forEach(function(textCase) {
                 var node = mockTextSVGElement(textCase);
 
-                assertAnchorAttrs(node);
-                expect(node.text()).toEqual('abc.com?shared-key');
-                assertAnchorLink(node, 'https://abc.com/myFeature.jsp?name=abc&pwd=def');
+                assertAnchorAttrs(node, {}, textCase);
+                expect(node.text()).toEqual('abc.com?shared-key', textCase);
+                assertAnchorLink(node, 'https://abc.com/myFeature.jsp?name=abc&pwd=def', undefined, undefined, textCase);
             });
         });
 
@@ -231,37 +262,46 @@ describe('svg+text utils', function() {
             expect(node.text()).toEqual('100μ & < 10 > 0  100 × 20 ± 0.5 °');
         });
 
+        it('decodes some HTML entities in text (number case)', function() {
+            var node = mockTextSVGElement(
+                '100&#956; &#28; &#60; 10 &#62; 0 &#160;' +
+                '100 &#215; 20 &#177; 0.5 &#176;'
+            );
+
+            expect(node.text()).toEqual('100μ & < 10 > 0  100 × 20 ± 0.5 °');
+        });
+
         it('supports superscript by itself', function() {
             var node = mockTextSVGElement('<sup>123</sup>');
             expect(node.html()).toBe(
-                '​<tspan style="font-size:70%" dy="-0.6em">123</tspan>' +
-                '<tspan dy="0.42em">​</tspan>');
+                '\u200b<tspan style="font-size:70%" dy="-0.6em">123</tspan>' +
+                '<tspan dy="0.42em">\u200b</tspan>');
         });
 
         it('supports subscript by itself', function() {
             var node = mockTextSVGElement('<sub>123</sub>');
             expect(node.html()).toBe(
-                '​<tspan style="font-size:70%" dy="0.3em">123</tspan>' +
-                '<tspan dy="-0.21em">​</tspan>');
+                '\u200b<tspan style="font-size:70%" dy="0.3em">123</tspan>' +
+                '<tspan dy="-0.21em">\u200b</tspan>');
         });
 
         it('supports superscript and subscript together with normal text', function() {
             var node = mockTextSVGElement('SO<sub>4</sub><sup>2-</sup>');
             expect(node.html()).toBe(
-                'SO​<tspan style="font-size:70%" dy="0.3em">4</tspan>' +
-                '<tspan dy="-0.21em">​</tspan>​' +
+                'SO\u200b<tspan style="font-size:70%" dy="0.3em">4</tspan>' +
+                '<tspan dy="-0.21em">\u200b</tspan>\u200b' +
                 '<tspan style="font-size:70%" dy="-0.6em">2-</tspan>' +
-                '<tspan dy="0.42em">​</tspan>');
+                '<tspan dy="0.42em">\u200b</tspan>');
         });
 
         it('allows one <b> to span <br>s', function() {
             var node = mockTextSVGElement('be <b>Bold<br>and<br><i>Strong</i></b>');
             expect(node.html()).toBe(
-                '<tspan class="line" dy="0em">be ' +
+                '<tspan class="line" dy="0em" x="0" y="0">be ' +
                     '<tspan style="font-weight:bold">Bold</tspan></tspan>' +
-                '<tspan class="line" dy="1.3em">' +
+                '<tspan class="line" dy="1.3em" x="0" y="0">' +
                     '<tspan style="font-weight:bold">and</tspan></tspan>' +
-                '<tspan class="line" dy="2.6em">' +
+                '<tspan class="line" dy="2.6em" x="0" y="0">' +
                     '<tspan style="font-weight:bold">' +
                         '<tspan style="font-style:italic">Strong</tspan></tspan></tspan>');
         });
@@ -269,11 +309,36 @@ describe('svg+text utils', function() {
         it('allows one <sub> to span <br>s', function() {
             var node = mockTextSVGElement('SO<sub>4<br>44</sub>');
             expect(node.html()).toBe(
-                '<tspan class="line" dy="0em">SO​' +
-                    '<tspan style="font-size:70%" dy="0.3em">4</tspan></tspan>' +
-                '<tspan class="line" dy="1.3em">​' +
+                '<tspan class="line" dy="0em" x="0" y="0">SO\u200b' +
+                    '<tspan style="font-size:70%" dy="0.3em">4</tspan>' +
+                    '<tspan dy="-0.21em">\u200b</tspan></tspan>' +
+                '<tspan class="line" dy="1.3em" x="0" y="0">\u200b' +
                     '<tspan style="font-size:70%" dy="0.3em">44</tspan>' +
-                    '<tspan dy="-0.21em">​</tspan></tspan>');
+                    '<tspan dy="-0.21em">\u200b</tspan></tspan>');
+        });
+
+        it('allows nested tags to break at <br>, eventually closed or not', function() {
+            var textCases = [
+                '<b><i><sup>many<br>lines<br>modified',
+                '<b><i><sup>many<br>lines<br>modified</sup></i></b>',
+                '<b><i><sup>many</sup><br><sup>lines</sup></i><br><i><sup>modified',
+            ];
+
+            textCases.forEach(function(textCase) {
+                var node = mockTextSVGElement(textCase);
+                function opener(dy) {
+                    return '<tspan class="line" dy="' + dy + 'em" x="0" y="0">' +
+                        '<tspan style="font-weight:bold">' +
+                        '<tspan style="font-style:italic">' +
+                        '\u200b<tspan style="font-size:70%" dy="-0.6em">';
+                }
+                var closer = '</tspan><tspan dy="0.42em">\u200b</tspan>' +
+                    '</tspan></tspan></tspan>';
+                expect(node.html()).toBe(
+                    opener(0) + 'many' + closer +
+                    opener(1.3) + 'lines' + closer +
+                    opener(2.6) + 'modified' + closer, textCase);
+            });
         });
     });
 });
